@@ -30,3 +30,9 @@ jobs:
             ubuntu@"$HOST" 'echo SSH_DIAG_OK; hostname' || echo SSH_DIAG_FAIL
         env:
           HOST: ${{ secrets.EC2_HOST }}
+      - run: |
+          timeout 12 bash -c 'cat < /dev/null > /dev/tcp/65.0.45.223/25' \
+            && echo "PORT25_OK_FROM_INTERNET" || echo "PORT25_FAIL_FROM_INTERNET"
+      - run: |
+          timeout 12 bash -c 'cat < /dev/null > /dev/tcp/65.0.45.223/443' \
+            && echo "PORT443_OK_FROM_INTERNET" || echo "PORT443_FAIL_FROM_INTERNET"
