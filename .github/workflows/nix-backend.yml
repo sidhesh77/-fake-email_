@@ -1,0 +1,92 @@
+name: nix-backend
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore: ["ui/**", "**.md"]
+  pull_request:
+    paths-ignore: ["ui/**", "**.md"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+      - run: cargo build --release -p http-server --locked
+      - name: Verify ELF (no Nix interpreter)
+        run: |
+          set -euo pipefail
+          file ./target/release/http-server
+          if file ./target/release/http-server | grep -q /nix/store; then exit 1; fi
+          ldd ./target/release/http-server | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: http-server
+          path: ./target/release/http-server
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: http-server
+          path: artifact
+      - run: |
+          set -euxo pipefail
+          SRC="$(find artifact -type f -name http-server | head -1)"
+          test -n "$SRC"
+          cp "$SRC" ./http-server && chmod +x ./http-server
+          file ./http-server
+      - uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: http-server
+          target: /tmp/
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            test -s /tmp/http-server
+            if file /tmp/http-server | grep -q '/nix/store'; then
+              echo "Refusing to install: Nix-linked binary (exec fails on Ubuntu with 203/EXEC / ENOENT)." >&2
+              exit 1
+            fi
+            sudo mkdir -p /opt/fake-email/bin
+            sudo systemctl stop fake-email 2>/dev/null || true
+            sudo install -m 0755 -o root -g root /tmp/http-server /opt/fake-email/bin/http-server.new
+            sudo mv /opt/fake-email/bin/http-server.new /opt/fake-email/bin/http-server
+            sudo systemctl daemon-reload || true
+            sudo systemctl start fake-email
+            for i in {1..30}; do
+              curl -sf --max-time 2 http://127.0.0.1:3001/api/health | grep -q OK && break || sleep 1
+            done
+            sudo systemctl is-active --quiet fake-email
+            curl -sf --max-time 5 http://127.0.0.1:3001/api/health | grep -q OK || {
+              sudo systemctl status fake-email --no-pager -l || true
+              sudo journalctl -u fake-email -n 80 --no-pager || true
+              file /opt/fake-email/bin/http-server || true
+              sudo ldd /opt/fake-email/bin/http-server || true
+              exit 1
+            }
+            rm -f /tmp/http-server

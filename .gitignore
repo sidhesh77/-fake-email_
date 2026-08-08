@@ -1,0 +1,7 @@
+target/
+result
+.env
+**/*.rs.bk
+.next/
+.DS_Store
+docs/*
