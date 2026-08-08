@@ -121,3 +121,4 @@ echo "Vercel NEXT_PUBLIC_API_URL=https://${API_DOMAIN}"
 echo "Secrets: EC2_HOST EC2_USER EC2_SSH_KEY"
 
 exit $EXIT_CODE
+# deploy trigger
