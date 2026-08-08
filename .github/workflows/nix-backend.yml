@@ -53,7 +53,7 @@ jobs:
           test -n "$SRC"
           cp "$SRC" ./http-server && chmod +x ./http-server
           file ./http-server
-      - uses: appleboy/scp-action@v1.2.0
+      - uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
